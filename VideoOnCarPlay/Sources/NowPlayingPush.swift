@@ -25,9 +25,19 @@ enum NowPlayingPush {
 final class DeliveredFrames: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
+    private var sizes: [String: Int] = [:]
 
-    func add() {
-        lock.lock(); count += 1; lock.unlock()
+    // size: the image size iOS asked for (the lock screen and the car may ask for different sizes)
+    func add(_ size: CGSize) {
+        lock.lock()
+        count += 1
+        sizes["\(Int(size.width))×\(Int(size.height))", default: 0] += 1
+        lock.unlock()
+    }
+
+    func takeSizes() -> [String: Int] {
+        lock.lock(); defer { sizes = [:]; lock.unlock() }
+        return sizes
     }
 
     func take() -> Int {

@@ -33,6 +33,7 @@ targets:
         UILaunchScreen: {}
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSPhotoLibraryUsageDescription: Pick a video to show on the car's screen.
+        NSCameraUsageDescription: Shows the camera live on the car's screen (camera source).
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: ${VIDEOONCARPLAY_BUNDLE_ID}

@@ -31,6 +31,7 @@ final class VideoPlayback {
     }
 
     var hasVideo: Bool { player.currentItem != nil }
+    var isReady: Bool { player.currentItem?.status == .readyToPlay }
     var elapsed: TimeInterval { player.currentTime().seconds.isFinite ? player.currentTime().seconds : 0 }
     var duration: TimeInterval? {
         guard let seconds = player.currentItem?.duration.seconds, seconds.isFinite, seconds > 0 else { return nil }

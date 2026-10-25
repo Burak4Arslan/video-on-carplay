@@ -64,3 +64,16 @@ enum FrameArt {
         }
     }
 }
+
+extension UIImage {
+    // Scaled down so the longer edge is `edge` (the drawn sources are made at 600 px); unchanged if already that small
+    func resized(to edge: Double) -> UIImage {
+        guard edge < Double(max(size.width, size.height)) else { return self }
+        let scale = edge / Double(max(size.width, size.height))
+        let target = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in draw(in: CGRect(origin: .zero, size: target)) }
+    }
+}

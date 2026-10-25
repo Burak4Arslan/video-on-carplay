@@ -37,25 +37,46 @@ struct CarPlayView: View {
                 Toggle(isOn: $screen.sameTrack) {
                     Label(L("Every frame is the same track", "Her kare aynı şarkı sayılsın"), systemImage: "music.note")
                 }
+                Picker(selection: $screen.artworkSize) {
+                    ForEach(CarScreen.sizeChoices, id: \.self) { Text("\(Int($0)) px").tag($0) }
+                } label: {
+                    Label(L("Artwork size", "Kapak boyutu"), systemImage: "photo")
+                }
             } header: {
                 Text(L("Smoothness", "Akıcılık"))
             } footer: {
                 Text(screen.canSkipWait
-                     ? L("iOS collects artwork changes and passes them on every half second; skipping the wait sends every frame right away. Try the second setting in the car to see what CarPlay prefers.",
-                         "iOS kapak değişikliklerini biriktirip yarım saniyede bir iletiyor; bekleme atlanınca her kare hemen gider. İkinci ayarın CarPlay'e etkisini arabada dene.")
+                     ? L("iOS collects artwork changes and passes them on every half second; skipping the wait sends every frame right away. If the car sometimes shows its empty artwork, lower the speed or the artwork size.",
+                         "iOS kapak değişikliklerini biriktirip yarım saniyede bir iletiyor; bekleme atlanınca her kare hemen gider. Araba arada boş kapak gösteriyorsa hızı ya da kapak boyutunu düşür.")
                      : L("No way to skip the wait was found on this iOS version; iOS passes on about 2 frames per second.",
                          "Bu iOS sürümünde beklemeyi atlamanın yolu bulunamadı; iOS saniyede yaklaşık 2 kare iletir."))
             }
 
-            Section(L("Picture", "Görüntü")) {
+            Section {
                 Picker(L("Source", "Kaynak"), selection: $screen.source) {
                     ForEach(CarScreen.Source.allCases) { Text($0.shortName).tag($0) }
                 }
                 .pickerStyle(.segmented)
+                if screen.source == .camera {
+                    Picker(L("Camera", "Kamera"), selection: $screen.cameraPosition) {
+                        ForEach(CameraCapture.Position.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    if let status = screen.cameraStatus {
+                        Text(status).font(.caption).foregroundStyle(.red)
+                    }
+                }
                 Picker(selection: $screen.fps) {
                     ForEach(CarScreen.fpsChoices, id: \.self) { Text(L("\(Int($0)) fps", "\(Int($0)) kare/sn")).tag($0) }
                 } label: {
                     Label(L("Speed", "Hız"), systemImage: "speedometer")
+                }
+            } header: {
+                Text(L("Picture", "Görüntü"))
+            } footer: {
+                if screen.source == .camera {
+                    Text(L("The camera only works while this app is on the screen (an iOS rule), so the phone stays awake. Use it only while parked.",
+                           "Kamera yalnızca uygulama ekrandayken çalışır (iOS kuralı), bu yüzden telefon uyumaz. Sadece park hâlindeyken kullan."))
                 }
             }
 
@@ -243,6 +264,13 @@ private struct StatusCard: View {
                 Text(screen.isRunning ? L("we give \(screen.sentFPS) · frame \(screen.frameNumber)", "biz \(screen.sentFPS) veriyoruz · kare \(screen.frameNumber)") : L("target \(Int(screen.fps)) fps", "hedef \(Int(screen.fps)) kare/sn"))
                     .font(.caption2.monospacedDigit())
                     .foregroundStyle(.white.opacity(0.5))
+                // Image sizes iOS asked for in the last second: a second size likely means the car asks by itself
+                if screen.isRunning, !screen.requestedSizes.isEmpty {
+                    Text(L("asked: \(screen.requestedSizes)", "istenen: \(screen.requestedSizes)"))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.white.opacity(0.5))
+                        .lineLimit(2)
+                }
             }
             Spacer(minLength: 0)
         }

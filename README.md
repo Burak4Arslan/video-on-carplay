@@ -37,7 +37,7 @@ The app UI is available in **English and Turkish** (globe menu, top right).
 - Plays audio so that iOS treats it as the now playing app, and sends a new artwork image for every frame
   (1 to 60 frames per second).
 - Sources: a **counter pattern** (to count how many frames really arrive), a **bouncing ball** (to judge
-  smoothness) and **video**.
+  smoothness), **video** and the phone's **camera** live.
 - Video from **Photos**, from a direct **mp4 or m3u8 link**, or from a **YouTube link**. The sound plays from the
   car's speakers; the progress bar on Now Playing shows the real position and you can seek from it.
 - Shows two numbers on the phone: the frames per second **we give** and the frames per second **iOS really passes
@@ -56,9 +56,9 @@ The app UI is available in **English and Turkish** (globe menu, top right).
 **Tested so far:**
 - iPhone 13 Pro Max, iOS 27.0.1: with the wait skipped iOS passes on **30 of 30** frames per second, without it **2**.
   The lock screen's Now Playing shows the app's artwork too.
-- In a car with wireless CarPlay, an earlier version showed video frames on Now Playing (at the 2-per-second
-  limit described below). The current version has not been tried in a car yet, so whether CarPlay itself shows
-  all 30 frames is still open.
+- In a car with wireless CarPlay: the video plays on Now Playing frame by frame. At 24 fps it was clean; at 30
+  and 60 fps the car now and then showed its empty placeholder artwork for a moment. The speeds in between
+  (25, 27, 29) and the smaller artwork sizes are there to find the car's limit.
 
 ## 2. Why it used to be choppy: iOS sends 2 artworks per second
 
@@ -90,6 +90,9 @@ Two more things that matter:
   same track. Both can be chosen in the app (**Every frame is the same track**), to compare in the car.
 - **A constant title.** CarPlay throttles title changes separately, so the title does not change per frame; the
   frame number is drawn into the picture instead.
+- **Send `MPNowPlayingInfoPropertyIsLiveStream` every time.** If it was ever `true` (for example while a video was
+  still opening), leaving the key out later did not clear it, and the car kept showing LIVE for a normal video.
+  Now it is always sent, `false` unless the source really is live (the camera).
 
 ## 3. Install
 
@@ -125,7 +128,9 @@ In Xcode pick your iPhone and press **Run**. Without `Config/local.env` choose y
 | **Skip the iOS wait** | Sends every frame right away (see section 2). Off: about 2 frames per second. |
 | **Every frame is the same track** | Keeps a constant content identifier. Off: every frame is a new track. |
 | **Source** | Counter, Ball or Video. |
-| **Speed** | 1, 2, 4, 8, 15, 24, 30 or 60 frames per second. |
+| **Artwork size** | 600, 450 or 300 px. Smaller images are less to carry to the car. |
+| **Speed** | 1 to 60 frames per second, with 20, 24, 25, 27 and 29 in between. |
+| **Camera** | Back or front camera, live. iOS only allows the camera while the app is on screen, so the phone stays awake. |
 | **Method** (video) | **Frame by frame**: the artwork trick. **Animated artwork**: iOS 26's `MPMediaItemAnimatedArtwork`; the app cuts up to 2 minutes of the video into square and portrait clips and the system plays them by itself. In our car this looked worse than frame by frame. |
 | **Fill the square** | Crops a 16:9 video to a square from the center, since CarPlay shows the artwork as a square. |
 | **Audible test tone** | Plays a quiet 440 Hz tone instead of silence, to hear that the audio is running. |
@@ -143,6 +148,7 @@ access outside its own player, so treat this as a personal experiment; it can br
 | [NowPlayingPush.swift](VideoOnCarPlay/Sources/NowPlayingPush.swift) | Skipping the half-second wait; counting the frames iOS really asks for. |
 | [VideoPlayback.swift](VideoOnCarPlay/Sources/VideoPlayback.swift) | `AVPlayer` with sound plus `AVPlayerItemVideoOutput` for frames (scaled down, turned to the right orientation, cropped and drawn off the main thread). |
 | [Frames.swift](VideoOnCarPlay/Sources/Frames.swift) | The counter pattern and the bouncing ball. |
+| [CameraCapture.swift](VideoOnCarPlay/Sources/CameraCapture.swift) | The live camera source. |
 | [AnimatedArtwork.swift](VideoOnCarPlay/Sources/AnimatedArtwork.swift) | iOS 26 animated artwork clips. |
 | [YouTubeLoader.swift](VideoOnCarPlay/Sources/YouTubeLoader.swift) | YouTube links (YouTubeKit, ranged downloads, combining video and audio). |
 | [CarPlayView.swift](VideoOnCarPlay/Sources/CarPlayView.swift) | The phone screen. |

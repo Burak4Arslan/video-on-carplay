@@ -8,7 +8,7 @@ import UIKit
 @MainActor
 final class CarScreen: ObservableObject {
     enum Source: String, CaseIterable, Identifiable {
-        case counter, animation, video
+        case counter, animation, video, camera
         var id: String { rawValue }
         // Also shown as the title on Now Playing
         var title: String {
@@ -16,6 +16,7 @@ final class CarScreen: ObservableObject {
             case .counter: L("Counter pattern", "Sayaç deseni")
             case .animation: L("Bouncing ball", "Seken top")
             case .video: L("Video", "Video")
+            case .camera: L("Camera", "Kamera")
             }
         }
         // Short name for the picker on screen
@@ -24,6 +25,7 @@ final class CarScreen: ObservableObject {
             case .counter: L("Counter", "Sayaç")
             case .animation: L("Ball", "Top")
             case .video: L("Video", "Video")
+            case .camera: L("Camera", "Kamera")
             }
         }
     }
@@ -39,10 +41,14 @@ final class CarScreen: ObservableObject {
         }
     }
 
-    static let fpsChoices: [Double] = [1, 2, 4, 8, 15, 24, 30, 60]
+    // In the car (wireless CarPlay) 24 was clean, at 30 and 60 the car sometimes showed its empty artwork; the steps in
+    // between are for finding the limit
+    static let fpsChoices: [Double] = [1, 2, 4, 8, 15, 20, 24, 25, 27, 29, 30, 60]
+    // Artwork edge in pixels: smaller images are less to carry to the car
+    static let sizeChoices: [Double] = [600, 450, 300]
 
     @Published private(set) var isRunning = false
-    @Published var source: Source = .counter { didSet { if isRunning { updateAudio() } } }
+    @Published var source: Source = .counter { didSet { if isRunning { updateAudio(); updateCamera() } } }
     @Published var fps: Double = 30 { didSet { if isRunning { restartTimer() } } }
     @Published var audible = false { didSet { if isRunning { startAudio() } } }
     // Changes every frame; not @Published, or the screen would be redrawn 30–60 times a second (shown with the preview)
@@ -56,6 +62,11 @@ final class CarScreen: ObservableObject {
     // Treat every frame as new artwork of the same track; with it off, iOS passes on every frame as a new track
     @Published var sameTrack = true { didSet { note(sameTrack ? L("Every frame is the same track", "Her kare aynı şarkı") : L("Every frame is a new track", "Her kare yeni şarkı")) } }
     let canSkipWait = NowPlayingPush.isAvailable
+    @Published var artworkSize: Double = 600 { didSet { note(L("Artwork size: \(Int(artworkSize)) px", "Kapak boyutu: \(Int(artworkSize)) px")) } }
+    @Published var cameraPosition: CameraCapture.Position = .back { didSet { if cameraPosition != oldValue { updateCamera(restart: true) } } }
+    @Published private(set) var cameraStatus: String?
+    // Image sizes iOS asked the artwork for in the last second, with counts (to see whether the car asks separately)
+    @Published private(set) var requestedSizes = ""
     @Published private(set) var preview: UIImage?
     @Published private(set) var log: [String] = []
     @Published private(set) var videoName: String?
@@ -78,6 +89,8 @@ final class CarScreen: ObservableObject {
     private var startedAt = Date()
     private var commandsRegistered = false
     private let video = VideoPlayback()
+    private let camera = CameraCapture()
+    private var cameraOn = false
     private var paused = false
     private var clips: AnimatedArtworkMaker.Clips?
     private var sentThisSecond = 0
@@ -95,6 +108,7 @@ final class CarScreen: ObservableObject {
         isRunning = true
         paused = false
         startAudio()
+        updateCamera()
         restartTimer()
         tick()
         note(L("Started: \(source.title), \(Int(fps)) fps", "Başladı: \(source.title), \(Int(fps)) kare/sn"))
@@ -108,6 +122,7 @@ final class CarScreen: ObservableObject {
         player = nil
         video.pause()
         isRunning = false
+        updateCamera()
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         note(L("Stopped", "Durdu"))
@@ -192,6 +207,8 @@ final class CarScreen: ObservableObject {
                 image = FrameArt.message(L("No video selected", "Video seçilmedi"), size: frameSize)
                 break
             }
+            // Until the player is ready the duration is unknown: sending then would mark the item as live in the car
+            guard video.isReady else { return }
             if method == .animated, clips != nil {
                 // With animated artwork the system plays the picture; we only update the position (once a second is enough)
                 if frameNumber % max(1, Int(fps)) == 0 { publish(nil, elapsed: elapsed) }
@@ -202,9 +219,14 @@ final class CarScreen: ObservableObject {
             kickRender()
             countSecond()
             return
+        case .camera:
+            kickRender()
+            countSecond()
+            return
         }
-        showPreview(image)
-        publish(image, elapsed: elapsed)
+        let sized = image.resized(to: artworkSize)
+        showPreview(sized)
+        publish(sized, elapsed: elapsed)
     }
 
     // The preview on the phone at most 10 times a second: SwiftUI redraws the screen each time, which loads the main thread
@@ -217,17 +239,29 @@ final class CarScreen: ObservableObject {
 
     // Prepare the next video frame in the background; at most one render runs at a time
     private func kickRender() {
-        guard renderTask == nil, source == .video, method != .animated else { return }
-        guard let frameSource = video.nextFrameSource() else { return }
+        guard renderTask == nil else { return }
+        let wanted = source
+        let frameSource: VideoPlayback.FrameSource
+        switch wanted {
+        case .video:
+            guard method != .animated, let next = video.nextFrameSource() else { return }
+            frameSource = next
+        case .camera:
+            guard let buffer = camera.takeFrame() else { return }
+            frameSource = .buffer(buffer, .up)
+        default:
+            return
+        }
         let fill = video.fillSquare
-        let maxSize = video.maxSize
+        let maxSize = CGFloat(artworkSize)
         let context = UIApplication.shared.applicationState == .background ? video.softwareContext : video.ciContext
         renderTask = Task.detached(priority: .userInitiated) { [weak self] in
             let frame = await VideoPlayback.render(frameSource, fillSquare: fill, maxSize: maxSize, context: context)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.renderTask = nil
-                guard let frame, self.isRunning, !self.paused, self.source == .video, self.method != .animated else { return }
+                guard let frame, self.isRunning, !self.paused, self.source == wanted,
+                      wanted == .camera || self.method != .animated else { return }
                 self.showPreview(frame)
                 self.publish(frame, elapsed: Date().timeIntervalSince(self.startedAt))
             }
@@ -238,8 +272,8 @@ final class CarScreen: ObservableObject {
         let artwork: MPMediaItemArtwork
         if let image {
             let delivered = self.delivered
-            artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in
-                delivered.add()
+            artwork = MPMediaItemArtwork(boundsSize: image.size) { size in
+                delivered.add(size)
                 return image
             }
             lastSent = image
@@ -259,6 +293,9 @@ final class CarScreen: ObservableObject {
             MPMediaItemPropertyPlaybackDuration: 3600,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsed.truncatingRemainder(dividingBy: 3600),
             MPNowPlayingInfoPropertyPlaybackRate: paused ? 0.0 : 1.0,
+            // Always sent explicitly: once it had been true, leaving the key out did not clear it, and the car kept
+            // showing LIVE for a video
+            MPNowPlayingInfoPropertyIsLiveStream: false,
         ]
         if source == .video, video.hasVideo {
             // Real duration and position for video: CarPlay shows the progress bar correctly
@@ -276,6 +313,11 @@ final class CarScreen: ObservableObject {
                 info[MPNowPlayingInfoPropertyIsLiveStream] = true
             }
             info[MPNowPlayingInfoPropertyPlaybackRate] = Double(video.player.rate)
+        } else if source == .camera {
+            // The camera really is live: no duration, LIVE on the car's progress bar
+            info[MPMediaItemPropertyArtist] = L("Live · \(Int(fps)) fps", "Canlı · \(Int(fps)) kare/sn")
+            info.removeValue(forKey: MPMediaItemPropertyPlaybackDuration)
+            info[MPNowPlayingInfoPropertyIsLiveStream] = true
         }
         if sameTrack {
             // Constant identifier: iOS treats every frame as new artwork of the same track. Without it every assignment is
@@ -294,8 +336,33 @@ final class CarScreen: ObservableObject {
         guard span >= 1 else { return }
         sentFPS = Int((Double(sentThisSecond) / span).rounded())
         deliveredFPS = Int((Double(delivered.take()) / span).rounded())
+        requestedSizes = delivered.takeSizes()
+            .sorted { $0.value > $1.value }
+            .map { "\($0.key) ×\($0.value)" }
+            .joined(separator: " · ")
         sentThisSecond = 0
         lastCount = now
+    }
+
+    // MARK: - Camera
+
+    // The camera runs only while sending with the camera source (and not paused); the screen stays awake meanwhile,
+    // because iOS stops the camera when the app leaves the screen
+    private func updateCamera(restart: Bool = false) {
+        let wanted = isRunning && !paused && source == .camera
+        if wanted && (!cameraOn || restart) {
+            cameraOn = true
+            cameraStatus = nil
+            camera.start(cameraPosition) { [weak self] failure in
+                self?.cameraStatus = failure.localizedDescription
+                self?.note(failure.localizedDescription)
+            }
+            note(L("Camera on (\(cameraPosition.title))", "Kamera açık (\(cameraPosition.title))"))
+        } else if !wanted && cameraOn {
+            cameraOn = false
+            camera.stop()
+        }
+        UIApplication.shared.isIdleTimerDisabled = wanted
     }
 
     // MARK: - The car's buttons
@@ -356,6 +423,7 @@ final class CarScreen: ObservableObject {
         stopTimer()
         player?.pause()
         video.pause()
+        updateCamera()
         // Re-send the last frame with the "paused" state so CarPlay stops the progress bar
         publish(lastSent, elapsed: source == .video ? video.elapsed : Date().timeIntervalSince(startedAt))
         note("🚗 \(button)")
@@ -365,6 +433,7 @@ final class CarScreen: ObservableObject {
         guard isRunning else { return }
         paused = false
         updateAudio()
+        updateCamera()
         restartTimer()
         note("🚗 \(button)")
     }
