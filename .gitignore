@@ -1,0 +1,11 @@
+# --- Personal: never committed ---
+Config/local.env
+
+# --- Generated / build output ---
+VideoOnCarPlay.xcodeproj/
+VideoOnCarPlay/Info.plist
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.DS_Store
