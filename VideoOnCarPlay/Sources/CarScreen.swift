@@ -8,7 +8,7 @@ import UIKit
 @MainActor
 final class CarScreen: ObservableObject {
     enum Source: String, CaseIterable, Identifiable {
-        case counter, animation, video, camera
+        case video, camera, counter, animation
         var id: String { rawValue }
         // Also shown as the title on Now Playing
         var title: String {
@@ -44,12 +44,13 @@ final class CarScreen: ObservableObject {
     // In the car (wireless CarPlay) 24 was clean, at 30 and 60 the car sometimes showed its empty artwork; the steps in
     // between are for finding the limit
     static let fpsChoices: [Double] = [1, 2, 4, 8, 15, 20, 24, 25, 27, 29, 30, 60]
-    // Artwork edge in pixels: smaller images are less to carry to the car
-    static let sizeChoices: [Double] = [600, 450, 300]
 
     @Published private(set) var isRunning = false
-    @Published var source: Source = .counter { didSet { if isRunning { updateAudio(); updateCamera() } } }
-    @Published var fps: Double = 30 { didSet { if isRunning { restartTimer() } } }
+    @Published var source: Source = .video { didSet { if isRunning { updateAudio(); updateCamera() } } }
+    // The speed is kept between launches (set once, then just press start in the car)
+    @Published var fps: Double = CarScreen.saved("carplay.fps", or: 24) {
+        didSet { UserDefaults.standard.set(fps, forKey: "carplay.fps"); if isRunning { restartTimer() } }
+    }
     @Published var audible = false { didSet { if isRunning { startAudio() } } }
     // Changes every frame; not @Published, or the screen would be redrawn 30–60 times a second (shown with the preview)
     private(set) var frameNumber = 0
@@ -62,7 +63,8 @@ final class CarScreen: ObservableObject {
     // Treat every frame as new artwork of the same track; with it off, iOS passes on every frame as a new track
     @Published var sameTrack = true { didSet { note(sameTrack ? L("Every frame is the same track", "Her kare aynı şarkı") : L("Every frame is a new track", "Her kare yeni şarkı")) } }
     let canSkipWait = NowPlayingPush.isAvailable
-    @Published var artworkSize: Double = 600 { didSet { note(L("Artwork size: \(Int(artworkSize)) px", "Kapak boyutu: \(Int(artworkSize)) px")) } }
+    // Artwork edge in pixels: 600 is the size that worked in the car (smaller artwork was never confirmed there)
+    let artworkSize: Double = 600
     @Published var cameraPosition: CameraCapture.Position = .back { didSet { if cameraPosition != oldValue { updateCamera(restart: true) } } }
     @Published private(set) var cameraStatus: String?
     // Image sizes iOS asked the artwork for in the last second, with counts (to see whether the car asks separately)
@@ -78,6 +80,10 @@ final class CarScreen: ObservableObject {
     var animatedSupport: String { AnimatedArtworkMaker.supportedKeysDescription }
 
     private let frameSize = CGSize(width: 600, height: 600)
+    nonisolated private static func saved(_ key: String, or fallback: Double) -> Double {
+        let value = UserDefaults.standard.double(forKey: key)
+        return value > 0 ? value : fallback
+    }
     private var player: AVAudioPlayer?
     private var timer: DispatchSourceTimer?
     private let delivered = DeliveredFrames()
@@ -503,12 +509,13 @@ final class CarScreen: ObservableObject {
         if method == .animated { prepareAnimated() }
     }
 
-    // A plain video link (mp4, m3u8) or a YouTube link
-    func loadLink(_ text: String) async {
+    // A plain video link (mp4, m3u8) or a YouTube link; false when it could not be opened (the reason is in videoStatus)
+    @discardableResult
+    func loadLink(_ text: String) async -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), let host = url.host?.lowercased() else {
             videoStatus = L("Could not read the link", "Link anlaşılmadı")
-            return
+            return false
         }
         if host.contains("youtube.com") || host.contains("youtu.be") {
             do {
@@ -521,12 +528,15 @@ final class CarScreen: ObservableObject {
                 updateAudio()
                 note("YouTube: \(result.title)")
                 if method == .animated { prepareAnimated() }
+                return true
             } catch {
                 videoStatus = L("Could not open YouTube: \(error.localizedDescription)", "YouTube açılamadı: \(error.localizedDescription)")
                 note(L("YouTube error: \(error)", "YouTube hatası: \(error)"))
+                return false
             }
         } else {
             loadVideo(url, name: url.lastPathComponent.isEmpty ? host : url.lastPathComponent)
+            return true
         }
     }
 

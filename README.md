@@ -58,7 +58,7 @@ The app UI is available in **English and Turkish** (globe menu, top right).
   The lock screen's Now Playing shows the app's artwork too.
 - In a car with wireless CarPlay: the video plays on Now Playing frame by frame. At 24 fps it was clean; at 30
   and 60 fps the car now and then showed its empty placeholder artwork for a moment. The speeds in between
-  (25, 27, 29) and the smaller artwork sizes are there to find the car's limit.
+  (25, 27, 29) are there to find the car's limit. The artwork is 600 px.
 
 ## 2. Why it used to be choppy: iOS sends 2 artworks per second
 
@@ -116,19 +116,22 @@ In Xcode pick your iPhone and press **Run**. Without `Config/local.env` choose y
 1. Connect the iPhone to CarPlay, open **Video on CarPlay** on the phone and press **Start sending to the car**.
 2. In CarPlay open **Now Playing**. If you don't see the artwork, open the **Settings** app on the car's CarPlay
    screen and turn on **Show Album Art**.
-3. Start with the **Counter** source at 30 fps: the number in the car should count up smoothly, and the white
+3. For video: press **Photos** or **YouTube** (paste the link in the sheet that opens). 24 fps is the default;
+   it was the clean speed in our car.
+4. To test the limit, pick the **Counter** source: the number in the car should count up smoothly, and the white
    bar at the bottom moves one step per frame, so skipped frames show up as gaps.
-4. For video: **Pick a video from Photos** or paste a link and press **Open**.
 5. The car's ⏭ ⏮ ⏯ buttons change the speed, the source and pause; every press shows up in the **Log**.
 
 ## 5. Settings
+
+Source and speed are on the main screen; the rest is behind the settings button (top right). The speed is
+remembered.
 
 | Setting | What it does |
 | --- | --- |
 | **Skip the iOS wait** | Sends every frame right away (see section 2). Off: about 2 frames per second. |
 | **Every frame is the same track** | Keeps a constant content identifier. Off: every frame is a new track. |
-| **Source** | Counter, Ball or Video. |
-| **Artwork size** | 600, 450 or 300 px. Smaller images are less to carry to the car. |
+| **Source** | Video, Camera, Counter or Ball. |
 | **Speed** | 1 to 60 frames per second, with 20, 24, 25, 27 and 29 in between. |
 | **Camera** | Back or front camera, live. iOS only allows the camera while the app is on screen, so the phone stays awake. |
 | **Method** (video) | **Frame by frame**: the artwork trick. **Animated artwork**: iOS 26's `MPMediaItemAnimatedArtwork`; the app cuts up to 2 minutes of the video into square and portrait clips and the system plays them by itself. In our car this looked worse than frame by frame. |

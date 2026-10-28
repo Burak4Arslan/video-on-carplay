@@ -3,14 +3,15 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+// Main screen: what is being sent, the start button, what to show (video from Photos or a link, camera, test patterns)
+// and the speed. Everything else (smoothness tricks, method, log) is in the settings sheet.
 struct CarPlayView: View {
     @ObservedObject var screen: CarScreen
     @State private var pickedVideo: PhotosPickerItem?
     // While a video is coming from Photos (it may download from iCloud; big files take a while)
     @State private var importProgress: Progress?
-    @State private var link = ""
-    @State private var loadingLink = false
-    @State private var showLog = false
+    @State private var showLink = false
+    @State private var showSettings = false
     // The screen is redrawn when the language changes; L() reads the same setting
     @AppStorage(AppLanguage.storageKey) private var language = AppLanguage.current.rawValue
 
@@ -30,34 +31,17 @@ struct CarPlayView: View {
             }
 
             Section {
-                Toggle(isOn: $screen.skipWait) {
-                    Label(L("Skip the iOS wait", "iOS'un beklemesini atla"), systemImage: "hare")
-                }
-                .disabled(!screen.canSkipWait)
-                Toggle(isOn: $screen.sameTrack) {
-                    Label(L("Every frame is the same track", "Her kare aynı şarkı sayılsın"), systemImage: "music.note")
-                }
-                Picker(selection: $screen.artworkSize) {
-                    ForEach(CarScreen.sizeChoices, id: \.self) { Text("\(Int($0)) px").tag($0) }
-                } label: {
-                    Label(L("Artwork size", "Kapak boyutu"), systemImage: "photo")
-                }
-            } header: {
-                Text(L("Smoothness", "Akıcılık"))
-            } footer: {
-                Text(screen.canSkipWait
-                     ? L("iOS collects artwork changes and passes them on every half second; skipping the wait sends every frame right away. If the car sometimes shows its empty artwork, lower the speed or the artwork size.",
-                         "iOS kapak değişikliklerini biriktirip yarım saniyede bir iletiyor; bekleme atlanınca her kare hemen gider. Araba arada boş kapak gösteriyorsa hızı ya da kapak boyutunu düşür.")
-                     : L("No way to skip the wait was found on this iOS version; iOS passes on about 2 frames per second.",
-                         "Bu iOS sürümünde beklemeyi atlamanın yolu bulunamadı; iOS saniyede yaklaşık 2 kare iletir."))
-            }
-
-            Section {
                 Picker(L("Source", "Kaynak"), selection: $screen.source) {
                     ForEach(CarScreen.Source.allCases) { Text($0.shortName).tag($0) }
                 }
                 .pickerStyle(.segmented)
-                if screen.source == .camera {
+                .listRowSeparator(.hidden)
+
+                switch screen.source {
+                case .video:
+                    currentVideo
+                    videoButtons
+                case .camera:
                     Picker(L("Camera", "Kamera"), selection: $screen.cameraPosition) {
                         ForEach(CameraCapture.Position.allCases) { Text($0.title).tag($0) }
                     }
@@ -65,46 +49,25 @@ struct CarPlayView: View {
                     if let status = screen.cameraStatus {
                         Text(status).font(.caption).foregroundStyle(.red)
                     }
+                default:
+                    EmptyView()
                 }
+
                 Picker(selection: $screen.fps) {
                     ForEach(CarScreen.fpsChoices, id: \.self) { Text(L("\(Int($0)) fps", "\(Int($0)) kare/sn")).tag($0) }
                 } label: {
                     Label(L("Speed", "Hız"), systemImage: "speedometer")
                 }
             } header: {
-                Text(L("Picture", "Görüntü"))
+                Text(L("What to show", "Ne gösterilsin"))
             } footer: {
-                if screen.source == .camera {
-                    Text(L("The camera only works while this app is on the screen (an iOS rule), so the phone stays awake. Use it only while parked.",
-                           "Kamera yalnızca uygulama ekrandayken çalışır (iOS kuralı), bu yüzden telefon uyumaz. Sadece park hâlindeyken kullan."))
-                }
-            }
-
-            videoSection
-
-            Section {
-                Toggle(isOn: $screen.audible) {
-                    Label(L("Audible test tone", "Duyulur test tonu"), systemImage: "waveform")
-                }
-                DisclosureGroup(isExpanded: $showLog) {
-                    if screen.log.isEmpty {
-                        Text(L("Nothing logged yet", "Henüz kayıt yok")).foregroundStyle(.secondary)
-                    }
-                    ForEach(screen.log, id: \.self) { Text($0).font(.caption.monospaced()) }
-                } label: {
-                    Label(L("Log", "Kayıt"), systemImage: "list.bullet.rectangle")
-                        .badge(screen.log.count)
-                }
-            } header: {
-                Text(L("Other", "Diğer"))
-            } footer: {
-                Text(L("In the car, ⏭ raises the speed, ⏮ switches the source, ⏯ pauses or resumes. Presses show up in the log.", "Arabadaki ⏭ hızı artırır, ⏮ kaynağı değiştirir, ⏯ durdurur ya da sürdürür. Basılanlar kayıtta görünür."))
+                Text(sourceFooter)
             }
         }
         .id(language)
         .navigationTitle("Video on CarPlay")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
                     Picker(L("Language", "Dil"), selection: $language) {
                         ForEach(AppLanguage.allCases) { Text($0.title).tag($0.rawValue) }
@@ -113,8 +76,16 @@ struct CarPlayView: View {
                     Image(systemName: "globe")
                 }
                 .accessibilityLabel(L("Language", "Dil"))
+                Button {
+                    showSettings = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .accessibilityLabel(L("Settings", "Ayarlar"))
             }
         }
+        .sheet(isPresented: $showLink) { LinkSheet(screen: screen) }
+        .sheet(isPresented: $showSettings) { SettingsSheet(screen: screen) }
         .onChange(of: pickedVideo) { _, item in
             guard let item else { return }
             importVideo(item)
@@ -136,67 +107,60 @@ struct CarPlayView: View {
         .tint(screen.isRunning ? .red : .green)
     }
 
-    private var videoSection: some View {
-        Section {
-            if let progress = importProgress {
-                ImportRow(progress: progress)
-            } else if let name = screen.videoName {
-                HStack(spacing: 12) {
-                    Image(systemName: "film.fill")
-                        .font(.title2)
-                        .foregroundStyle(.tint)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(name).lineLimit(1)
-                        if let status = screen.videoStatus {
-                            Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                        }
+    // The chosen video, the import progress or a hint
+    @ViewBuilder private var currentVideo: some View {
+        if let progress = importProgress {
+            ImportRow(progress: progress)
+        } else if let name = screen.videoName {
+            HStack(spacing: 12) {
+                Image(systemName: "film.fill")
+                    .font(.title2)
+                    .foregroundStyle(.tint)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).lineLimit(1)
+                    if let status = screen.videoStatus {
+                        Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
-            } else if let status = screen.videoStatus {
-                Text(status).font(.caption).foregroundStyle(.secondary)
             }
+        } else {
+            Text(screen.videoStatus ?? L("No video yet: pick one from Photos or open a YouTube link.", "Henüz video yok: galeriden seç ya da YouTube linki aç."))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
 
+    // Two equal buttons: Photos and YouTube (the link is typed in its own sheet)
+    private var videoButtons: some View {
+        HStack(spacing: 12) {
             // .current: take the video as it is. By default Photos may convert it to a compatible format, which takes long.
             PhotosPicker(selection: $pickedVideo, matching: .videos, preferredItemEncoding: .current) {
-                Label(L("Pick a video from Photos", "Fotoğraflar'dan video seç"), systemImage: "photo.on.rectangle")
+                Label(L("Photos", "Galeri"), systemImage: "photo.on.rectangle")
+                    .frame(maxWidth: .infinity)
             }
             .disabled(importProgress != nil)
+            Button {
+                showLink = true
+            } label: {
+                Label("YouTube", systemImage: "play.rectangle.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .tint(.red)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .font(.body.weight(.semibold))
+    }
 
-            HStack {
-                Image(systemName: "link").foregroundStyle(.secondary)
-                TextField(L("YouTube, mp4 or m3u8 link", "YouTube, mp4 ya da m3u8 linki"), text: $link)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .keyboardType(.URL)
-                    .submitLabel(.go)
-                    .onSubmit(openLink)
-                if loadingLink {
-                    ProgressView()
-                } else {
-                    Button(L("Open", "Aç"), action: openLink)
-                        .buttonStyle(.bordered)
-                        .disabled(link.isEmpty)
-                }
-            }
-
-            Picker(L("Method", "Yöntem"), selection: $screen.method) {
-                ForEach(CarScreen.Method.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            if screen.method == .frames {
-                Toggle(isOn: $screen.fillSquare) {
-                    Label(L("Fill the square (crop the video)", "Kareyi doldur (videoyu kırp)"), systemImage: "crop")
-                }
-            } else if let status = screen.animatedStatus {
-                Text(status).font(.caption).foregroundStyle(.secondary)
-            }
-        } header: {
-            Text(L("Video (with sound)", "Video (sesiyle)"))
-        } footer: {
-            Text(screen.method == .frames
-                 ? L("The sound comes from the car's speakers, the picture from the artwork.", "Ses arabanın hoparlöründen, görüntü kapak resminden gelir.")
-                 : L("Animated artwork (iOS 26): the system plays a 2-minute clip cut from the video by itself. Supported kinds: \(screen.animatedSupport).",
-                     "Hareketli kapak (iOS 26): videodan kırpılmış 2 dakikalık bir klibi sistem kendisi oynatır. Desteklenen türler: \(screen.animatedSupport)."))
+    private var sourceFooter: String {
+        switch screen.source {
+        case .video:
+            L("The sound comes from the car's speakers, the picture from the artwork.", "Ses arabanın hoparlöründen, görüntü kapak resminden gelir.")
+        case .camera:
+            L("The camera only works while this app is on the screen (an iOS rule), so the phone stays awake. Use it only while parked.",
+              "Kamera yalnızca uygulama ekrandayken çalışır (iOS kuralı), bu yüzden telefon uyumaz. Sadece park hâlindeyken kullan.")
+        case .counter, .animation:
+            L("Test pattern: the frame number in the picture shows how many frames reach the car.", "Test deseni: resimdeki kare numarası arabaya kaç kare ulaştığını gösterir.")
         }
     }
 
@@ -217,14 +181,156 @@ struct CarPlayView: View {
         }
         importProgress = progress
     }
+}
 
-    private func openLink() {
-        guard !link.isEmpty, !loadingLink else { return }
-        loadingLink = true
-        Task {
-            await screen.loadLink(link)
-            loadingLink = false
+// Opening a YouTube (or mp4 / m3u8) link: paste, open, the sheet closes when the video is ready
+private struct LinkSheet: View {
+    @ObservedObject var screen: CarScreen
+    @Environment(\.dismiss) private var dismiss
+    @State private var link = ""
+    @State private var loading = false
+    @State private var failed = false
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(L("YouTube link", "YouTube linki"), text: $link, axis: .vertical)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .submitLabel(.go)
+                        .focused($focused)
+                        .onSubmit(open)
+                    PasteButton(payloadType: String.self) { strings in
+                        guard let text = strings.first else { return }
+                        link = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        open()
+                    }
+                } footer: {
+                    Text(L("mp4 and m3u8 links work too.", "mp4 ve m3u8 linkleri de olur."))
+                }
+                if loading || failed, let status = screen.videoStatus {
+                    Section {
+                        HStack(spacing: 10) {
+                            if loading { ProgressView() }
+                            Text(status)
+                                .font(.callout)
+                                .foregroundStyle(failed ? .red : .secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle(L("Open a link", "Linkten aç"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button(L("Cancel", "Vazgeç")) { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if loading {
+                        ProgressView()
+                    } else {
+                        Button(L("Open", "Aç"), action: open).disabled(link.isEmpty)
+                    }
+                }
+            }
+            .onAppear { focused = true }
         }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func open() {
+        guard !link.isEmpty, !loading else { return }
+        loading = true
+        failed = false
+        Task {
+            let ok = await screen.loadLink(link)
+            loading = false
+            if ok { dismiss() } else { failed = true }
+        }
+    }
+}
+
+// Smoothness tricks, the video method, the test tone and the log
+private struct SettingsSheet: View {
+    @ObservedObject var screen: CarScreen
+    @Environment(\.dismiss) private var dismiss
+    @State private var showLog = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle(isOn: $screen.skipWait) {
+                        Label(L("Skip the iOS wait", "iOS'un beklemesini atla"), systemImage: "hare")
+                    }
+                    .disabled(!screen.canSkipWait)
+                    Toggle(isOn: $screen.sameTrack) {
+                        Label(L("Every frame is the same track", "Her kare aynı şarkı sayılsın"), systemImage: "music.note")
+                    }
+                } header: {
+                    Text(L("Smoothness", "Akıcılık"))
+                } footer: {
+                    Text(screen.canSkipWait
+                         ? L("iOS collects artwork changes and passes them on every half second; skipping the wait sends every frame right away. If the car sometimes shows its empty artwork, lower the speed.",
+                             "iOS kapak değişikliklerini biriktirip yarım saniyede bir iletiyor; bekleme atlanınca her kare hemen gider. Araba arada boş kapak gösteriyorsa hızı düşür.")
+                         : L("No way to skip the wait was found on this iOS version; iOS passes on about 2 frames per second.",
+                             "Bu iOS sürümünde beklemeyi atlamanın yolu bulunamadı; iOS saniyede yaklaşık 2 kare iletir."))
+                }
+
+                Section {
+                    Picker(L("Method", "Yöntem"), selection: $screen.method) {
+                        ForEach(CarScreen.Method.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    if screen.method == .frames {
+                        Toggle(isOn: $screen.fillSquare) {
+                            Label(L("Fill the square (crop the video)", "Kareyi doldur (videoyu kırp)"), systemImage: "crop")
+                        }
+                    } else if let status = screen.animatedStatus {
+                        Text(status).font(.caption).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text(L("Video method", "Video yöntemi"))
+                } footer: {
+                    Text(screen.method == .frames
+                         ? L("Frame by frame: every frame is sent as the artwork.", "Kare kare: her kare kapak olarak gönderilir.")
+                         : L("Animated artwork (iOS 26): the system plays a 2-minute clip cut from the video by itself. Supported kinds: \(screen.animatedSupport).",
+                             "Hareketli kapak (iOS 26): videodan kırpılmış 2 dakikalık bir klibi sistem kendisi oynatır. Desteklenen türler: \(screen.animatedSupport)."))
+                }
+
+                Section {
+                    Toggle(isOn: $screen.audible) {
+                        Label(L("Audible test tone", "Duyulur test tonu"), systemImage: "waveform")
+                    }
+                    DisclosureGroup(isExpanded: $showLog) {
+                        if screen.log.isEmpty {
+                            Text(L("Nothing logged yet", "Henüz kayıt yok")).foregroundStyle(.secondary)
+                        }
+                        ForEach(screen.log, id: \.self) { Text($0).font(.caption.monospaced()) }
+                    } label: {
+                        Label(L("Log", "Kayıt"), systemImage: "list.bullet.rectangle")
+                            .badge(screen.log.count)
+                    }
+                } header: {
+                    Text(L("Other", "Diğer"))
+                } footer: {
+                    Text(L("In the car, ⏭ raises the speed, ⏮ switches the source, ⏯ pauses or resumes. Presses show up in the log.", "Arabadaki ⏭ hızı artırır, ⏮ kaynağı değiştirir, ⏯ durdurur ya da sürdürür. Basılanlar kayıtta görünür."))
+                }
+            }
+            .navigationTitle(L("Settings", "Ayarlar"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(L("Done", "Tamam")) { dismiss() }
+                }
+            }
+        }
+        // Half height first: the status card stays visible above, so a toggle's effect on the frame rate shows right away
+        .presentationDetents([.medium, .large])
+        .presentationBackgroundInteraction(.enabled(upThrough: .medium))
     }
 }
 
